@@ -694,6 +694,9 @@ func run_txs(ending_block uint64) {
 		state_db.Commit(false)
 		*/
 
+		fmt.Println("duration :", duration.String());
+		fmt.Println("gas used: ", gas);
+		fmt.Println("TPS: ", (float64(len(block.Transactions())) / float64(duration.Milliseconds())) * 1000.0)
 		fmt.Println(duration)
 		fmt.Println(gas)
 		//fmt.Println(receipts)

@@ -1,3 +1,8 @@
 uniswap_sim
 
 src/contracts/*/*.go
+
+alloc/
+env/
+txs/
+block/

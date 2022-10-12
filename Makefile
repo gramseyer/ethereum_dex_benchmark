@@ -13,7 +13,7 @@ CONTRACTS_GO=${CONTRACTS:.sol=.go}
 		--pkg=contracts \
 		--out=$@
 
-uniswap_sim : $(CONTRACTS_GO)
+uniswap_sim : $(CONTRACTS_GO) src/uniswap_sim.go
 	go build src/uniswap_sim.go
 
 all: uniswap_sim
