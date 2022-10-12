@@ -1,0 +1,6 @@
+[submodule "src/contracts/openzeppelin-contracts"]
+	path = src/contracts/openzeppelin-contracts
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts.git
+[submodule "src/contracts/v2-core"]
+	path = src/contracts/v2-core
+	url = https://github.com/Uniswap/v2-core.git
