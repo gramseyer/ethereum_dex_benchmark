@@ -1,20 +1,27 @@
 
 
 CONTRACTS = \
-	src/contracts/token/ERC20Mintable.sol \
-	src/contracts/uniswap/UniswapV2Factory.sol \
-	src/contracts/util/UniswapPairWrapper.sol
+	contracts/token/ERC20Mintable.sol \
+	contracts/uniswap/UniswapV2Factory.sol \
+	contracts/univ2pair/UniswapV2Pair.sol \
+	contracts/util/UniswapPairWrapper.sol
 
 CONTRACTS_GO=${CONTRACTS:.sol=.go}
 
 %.go : %.sol
+	solc --bin -o $(basename $<).bin --overwrite $< && \
+	solc --abi -o $(basename $<).abi --overwrite $< && \
 	abigen \
-		--sol=$< \
-		--pkg=contracts \
+		--bin $(basename $<).bin/$(basename $(notdir $<)).bin \
+		--abi $(basename $<).abi/$(basename $(notdir $<)).abi \
+		--pkg=$(basename $(notdir $<)) \
 		--out=$@
 
-uniswap_sim : $(CONTRACTS_GO) src/uniswap_sim.go
-	go build src/uniswap_sim.go
+#$(notdir $(patsubst %/,%,$(basename $(dir $<))))
+
+
+uniswap_sim : $(CONTRACTS_GO) $(CONTRACTS) uniswap_sim.go
+	go build uniswap_sim.go
 
 all: uniswap_sim
 

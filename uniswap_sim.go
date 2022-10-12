@@ -15,9 +15,10 @@ import (
 	"flag"
 	"io/ioutil"
 
-	token "contracts/token"
-	uniswap "contracts/uniswap"
-	util "contracts/util"
+	token "ethereum_dex_benchmark/contracts/token"
+	uniswap "ethereum_dex_benchmark/contracts/uniswap"
+	util "ethereum_dex_benchmark/contracts/util"
+	univ2pair "ethereum_dex_benchmark/contracts/univ2pair"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -115,7 +116,7 @@ func (ctx *TokenContext) Approve(amount int64, sender_account *AccountContext, a
 }
 
 type TokenPairContext struct {
-	pair 			*uniswap.UniswapV2Pair
+	pair 			*univ2pair.UniswapV2Pair
 	pair_itf 		*util.UniswapPairWrapper
 	address 		common.Address // address of actual uniswap pair, not caller interface
 	itf_address 	common.Address
@@ -252,7 +253,6 @@ func gen_swap_txs(num_txs uint64, token_pairs *[]TokenPairContext, accounts *[]*
 	txs := []types.Transaction{}
 
 	for i := uint64(0); i < num_txs; i++ {
-		fmt.Println(i)
 		txs = append(txs, gen_random_swap(token_pairs, accounts))
 	}
 	return txs
@@ -312,7 +312,7 @@ func deploy_uniswap_contracts(tokens []TokenContext, accounts *[]*AccountContext
 				log.Fatal(err)
 			}
 
-			pair, err := uniswap.NewUniswapV2Pair(pair_addr, backend)
+			pair, err := univ2pair.NewUniswapV2Pair(pair_addr, backend)
 			if (err != nil) {
 				log.Fatal(err)
 			}
@@ -397,6 +397,7 @@ func account_to_tx_opts(account *AccountContext) *bind.TransactOpts {
 		log.Fatal(err)
 	}
 	opts.Nonce = big.NewInt(account.nonce)
+	opts.GasLimit = 100000000
 	return opts
 }
 
@@ -419,7 +420,12 @@ func load_genesis(genesis_block_number uint64) core.GenesisAlloc {
 		log.Fatal(err)
 	}
 	
-	json.Unmarshal(data, &genesis_alloc)
+	err = json.Unmarshal(data, &genesis_alloc)
+	if (err != nil) {
+		log.Fatal(err)
+	}
+	fmt.Println("alloc:", genesis_alloc)
+
 	return genesis_alloc
 }
 
@@ -427,9 +433,13 @@ func load_genesis(genesis_block_number uint64) core.GenesisAlloc {
 func make_genesis(accounts []*AccountContext, db ethdb.Database, genesis_block_number uint64) (*backends.SimulatedBackend) {
 	genesis_alloc := make(core.GenesisAlloc)
 
+	initial := big.NewInt(math.MaxInt64);
+	//initial.Exp(initial, big.NewInt(100), nil);
+
+
 	for _, account := range accounts {
 		genesis_alloc[account.FromAddress] = core.GenesisAccount{
-			Balance: big.NewInt(10000000000),
+			Balance: initial,
 			Nonce: uint64(account.nonce)}
 	}
 
@@ -466,6 +476,10 @@ func deploy_tokens(backend bind.ContractBackend, accounts []*AccountContext, num
 		symbol := "DT" + strconv.FormatUint(i, 10)
 		fmt.Println("making token ", name)
 		token_addr, creation_tx, tok, err := token.DeployERC20Mintable(account_to_tx_opts(accounts[0]), backend, name, symbol)
+		if (err!= nil) {
+			log.Fatal(err)
+		}
+	
 		accounts[0].increment_nonce()
 
 		txs = append(txs, *creation_tx)
@@ -631,29 +645,37 @@ func run_txs(ending_block uint64) {
 
 	alloc := load_genesis(0)
 
-	genesis := core.Genesis {Config: params.AllEthashProtocolChanges, GasLimit: uint64(100000000), Alloc : alloc}
-	genesis.MustCommit(db)
+	fmt.Println(alloc)
+	
+	genesis := core.Genesis {Config: params.AllEthashProtocolChanges, GasLimit: uint64(1000000000), Alloc : alloc}
+	gen_block := genesis.MustCommit(db)
+
+	fmt.Println("root hash:", gen_block.Header().Root)
 
 	bc, err := core.NewBlockChain(db, nil, params.AllEthashProtocolChanges, ethash.NewFaker(), vm.Config{}, nil, nil)
 	if (err != nil) {
 		log.Fatal(err)
 	}
 
-	genesis_block := load_block(0)
-
-	bc.ResetWithGenesisBlock(genesis_block)
-
+	//genesis_block := load_block(0)
+	//err = bc.ResetWithGenesisBlock(genesis_block)
+	//if (err != nil) {
+	//	log.Fatal(err);
+//	}
 	//backend := backends.NewSimulatedBackendWithDatabase(db, alloc, uint64(10000000000))
 
 	state_processor := bc.Processor()//core.NewStateProcessor(backend.Blockchain().Config(), backend.Blockchain(), backend.Blockchain().Engine())
 
 	vm_cfg := bc.GetVMConfig()
 
+
+
 	for i := uint64(1); i <= ending_block; i++ {
 
 		fmt.Println("processing block", i)
 		state_db , err := bc.State()
 		if (err != nil) {
+			fmt.Println("fail early")
 			log.Fatal(err)
 		}
 
@@ -668,9 +690,10 @@ func run_txs(ending_block uint64) {
 		}
 		duration := time.Since(start)
 
-		status, err := bc.WriteBlockWithState(block, receipts, logs, state_db, false)
+		status, err := bc.WriteBlockAndSetHead(block, receipts, logs, state_db, false)
 
 		if (err != nil) {
+			fmt.Println("here");
 			log.Fatal(err)
 		}
 
@@ -697,8 +720,6 @@ func run_txs(ending_block uint64) {
 		fmt.Println("duration :", duration.String());
 		fmt.Println("gas used: ", gas);
 		fmt.Println("TPS: ", (float64(len(block.Transactions())) / float64(duration.Milliseconds())) * 1000.0)
-		fmt.Println(duration)
-		fmt.Println(gas)
 		//fmt.Println(receipts)
 
 		//fmt.Println(bc.CurrentHeader().Number)
@@ -726,7 +747,7 @@ func gen_txs(num_blocks uint64, num_txs uint64, num_tokens uint64, num_accounts 
 	token_pairs, txs_add := deploy_uniswap_contracts(tokens, &accounts, simulator)
 	txs = append(txs, txs_add...)
 
-	dump_txs(txs, current_block)
+	//dump_txs(txs, current_block)
 	make_env(current_block)
 	dump_block(current_block, simulator)
 	simulator.Commit()

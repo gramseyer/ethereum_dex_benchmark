@@ -1,6 +1,8 @@
 uniswap_sim
 
-src/contracts/*/*.go
+contracts/*/*.bin/*
+contracts/*/*.abi/*
+contracts/*/*.go
 
 alloc/
 env/
