@@ -280,7 +280,7 @@ func authorize_uniswap_itfs(token0 *TokenContext, token1 *TokenContext,  pair_if
 	return txs
 }
 
-func deploy_uniswap_contracts(tokens []TokenContext, accounts *[]*AccountContext, backend bind.ContractBackend) ([]TokenPairContext, []types.Transaction) {
+func deploy_uniswap_contracts(tokens []TokenContext, accounts *[]*AccountContext, backend *backends.SimulatedBackend, block_number *uint64) ([]TokenPairContext, []types.Transaction) {
 
 	token_pairs := []TokenPairContext{}
 	txs := []types.Transaction{}
@@ -337,6 +337,8 @@ func deploy_uniswap_contracts(tokens []TokenContext, accounts *[]*AccountContext
 			auth_txs := authorize_uniswap_itfs(&tokens[i], &tokens[j], &pair_ctx, accounts, backend)
 			txs = append(txs, auth_txs...)
 		}
+		backend.Commit()
+		dump_block(block_number, backend)
 	}
 
 	fmt.Println("deployed uniswap")
@@ -346,12 +348,12 @@ func deploy_uniswap_contracts(tokens []TokenContext, accounts *[]*AccountContext
 		fmt.Println(tok.token.Allowance(gen_call_opts(), creator_account.FromAddress, token_pairs[3].itf_address))
 	}
 
-	liquidity_txs := provide_all_liquidity(&token_pairs, creator_account)
+	liquidity_txs := provide_all_liquidity(&token_pairs, creator_account, backend, block_number)
 	txs = append(txs, liquidity_txs...)
 	return token_pairs, txs
 }
 
-func provide_all_liquidity(pairs *[]TokenPairContext, sender *AccountContext) []types.Transaction {
+func provide_all_liquidity(pairs *[]TokenPairContext, sender *AccountContext, backend *backends.SimulatedBackend, block_number *uint64) []types.Transaction {
 
 	txs := []types.Transaction{}
 
@@ -360,6 +362,8 @@ func provide_all_liquidity(pairs *[]TokenPairContext, sender *AccountContext) []
 		tx := pair.ProvideLiquidity(100000, sender)
 		txs = append(txs, *tx)
 	}
+	backend.Commit()
+	dump_block(block_number, backend)
 	return txs
 
 }
@@ -466,7 +470,7 @@ func make_genesis(accounts []*AccountContext, db ethdb.Database, genesis_block_n
 	return sim
 }
 
-func deploy_tokens(backend bind.ContractBackend, accounts []*AccountContext, num_tokens uint64) ([]TokenContext, []types.Transaction) {
+func deploy_tokens(backend *backends.SimulatedBackend, block_number *uint64, accounts []*AccountContext, num_tokens uint64) ([]TokenContext, []types.Transaction) {
 
 	tokens := []TokenContext{}
 	txs := []types.Transaction{}
@@ -505,10 +509,13 @@ func deploy_tokens(backend bind.ContractBackend, accounts []*AccountContext, num
 			}
 			mint_txs[j] = *mint_tx
 
-//			txs = append(txs, *mint_tx)
+			txs = append(txs, *mint_tx)
 			accounts[j].increment_nonce()
 		}
 		txs = append(txs, mint_txs...)
+
+		backend.Commit()
+		dump_block(block_number, backend)
 	}
 	return tokens, txs
 }
@@ -555,8 +562,7 @@ func gen_swap_block(token_pairs *[]TokenPairContext, accounts *[]*AccountContext
 	dump_txs(txs, *block_number)
 	make_env(*block_number)
 	simulator.Commit()
-	dump_block(*block_number, simulator)
-	*block_number++
+	dump_block(block_number, simulator)
 }
 
 func clear_envs() {
@@ -612,8 +618,8 @@ func load_block(block_number uint64) *types.Block {
 	return deserialize_block(wrapper)
 }
 
-func dump_block(block_number uint64, simulator *backends.SimulatedBackend) {
-	block, err := simulator.BlockByNumber(context.Background(), big.NewInt(int64(block_number)))
+func dump_block(block_number *uint64, simulator *backends.SimulatedBackend) {
+	block, err := simulator.BlockByNumber(context.Background(), big.NewInt(int64(*block_number)))
 	if (err != nil) {
 		log.Fatal(err)
 	}
@@ -625,7 +631,7 @@ func dump_block(block_number uint64, simulator *backends.SimulatedBackend) {
 	stringify, _ := json.MarshalIndent(serializable_block, "", "\t")
 	str := string(stringify)
 
-	file, err := os.Create("block/" + strconv.FormatUint(block_number, 10) + ".json")
+	file, err := os.Create("block/" + strconv.FormatUint(*block_number, 10) + ".json")
 	if (err != nil) {
 		log.Fatal(err)
 	}
@@ -634,13 +640,16 @@ func dump_block(block_number uint64, simulator *backends.SimulatedBackend) {
 	if (err != nil) {
 		log.Fatal(err)
 	}
+	fmt.Println("saving block ", *block_number)
+
+	*block_number++
 
 	file.Close()
 }
 
 // inclusive - start with alloc starting_block, run txs starting_block
 // until we run txs ending_block, ending in alloc ending_block+1
-func run_txs(ending_block uint64) { 
+func run_txs(ending_block uint64, skip_block uint64) { 
 	db := rawdb.NewMemoryDatabase()
 
 	alloc := load_genesis(0)
@@ -668,7 +677,9 @@ func run_txs(ending_block uint64) {
 
 	vm_cfg := bc.GetVMConfig()
 
-
+	time_acc := float64(0.0)
+	blk_size := int64(0)
+	count := int64(0)
 
 	for i := uint64(1); i <= ending_block; i++ {
 
@@ -726,8 +737,22 @@ func run_txs(ending_block uint64) {
 		//blk := bc.CurrentBlock()
 
 		//fmt.Println(blk.Transactions())
-
+		fmt.Println(i, skip_block, len(block.Transactions()), blk_size)
+		if (i > skip_block) {
+			time_acc += float64(duration.Milliseconds());
+			if (blk_size == 0) {
+				blk_size = int64(len(block.Transactions()))
+			}
+			if (blk_size != int64(len(block.Transactions()))) {
+				log.Fatal("mismatched block size")
+			}
+			count++
+		}
 	}
+
+	avg := float64(count * blk_size * 1000) / time_acc
+
+	fmt.Println("avg tps: ", avg)
 }
 
 func gen_txs(num_blocks uint64, num_txs uint64, num_tokens uint64, num_accounts uint64) {
@@ -742,17 +767,17 @@ func gen_txs(num_blocks uint64, num_txs uint64, num_tokens uint64, num_accounts 
 
 	simulator := make_genesis(accounts, db, current_block)
 
-	tokens, txs := deploy_tokens(simulator, accounts, num_tokens)
+	tokens, txs := deploy_tokens(simulator, &current_block, accounts, num_tokens)
 	fmt.Println("deployed tokens")
-	token_pairs, txs_add := deploy_uniswap_contracts(tokens, &accounts, simulator)
+	token_pairs, txs_add := deploy_uniswap_contracts(tokens, &accounts, simulator, &current_block)
 	txs = append(txs, txs_add...)
 
 	//dump_txs(txs, current_block)
 	make_env(current_block)
-	dump_block(current_block, simulator)
 	simulator.Commit()
+	dump_block(&current_block, simulator)
+	//simulator.Commit()
 	fmt.Println("finished setup")
-	current_block++
 
 
 	for i := uint64(0); i < num_blocks; i++ {
@@ -771,6 +796,7 @@ func main () {
 	run_cmd := flag.NewFlagSet("run", flag.ExitOnError)
 	//run_start_block := run_cmd.Int("start", 1, "start")
 	run_end_block := run_cmd.Int("end", 0, "end")
+	skip_block := run_cmd.Int("skip", 0, "skip")
 
 	if len(os.Args) < 2 {
 		log.Fatal("expected run or gen subcommands")
@@ -779,7 +805,7 @@ func main () {
 	switch os.Args[1] {
 	case "run":
 		run_cmd.Parse(os.Args[2:])
-		run_txs(uint64(*run_end_block))
+		run_txs(uint64(*run_end_block), uint64(*skip_block))
 	case "gen":
 		gen_cmd.Parse(os.Args[2:])
 		gen_txs(uint64(*gen_num_blocks), uint64(*gen_txs_per_block), uint64(*gen_num_tokens), uint64(*gen_num_accounts))
