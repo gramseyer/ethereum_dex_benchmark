@@ -2,7 +2,7 @@
 
 CONTRACTS = \
 	src/contracts/token/ERC20Mintable.sol \
-	src/contracts/v2-core/contracts/UniswapV2Factory.sol \
+	src/contracts/uniswap/UniswapV2Factory.sol \
 	src/contracts/util/UniswapPairWrapper.sol
 
 CONTRACTS_GO=${CONTRACTS:.sol=.go}
